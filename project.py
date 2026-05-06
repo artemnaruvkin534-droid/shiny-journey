@@ -23,8 +23,43 @@ clock = pygame.time.Clock()
 icon = pygame.image.load(get_resource_path("images/favicon.ico")).convert_alpha()
 pygame.display.set_icon(icon)
 
-# Загрузка изображений
-bg = pygame.image.load(get_resource_path("images/font.png")).convert_alpha()
+# ============================================
+# 🔥 ЗАГРУЗКА ФОНОВ ДЛЯ РАЗНЫХ ТЕМ УРОВНЕЙ 🔥
+# ============================================
+backgrounds = {}
+bg_themes = {
+    "tutorial": "images/font.png",
+    "forest": "images/font.png",
+    "desert": "images/desert.jpg",
+    "ice": "images/winter.jpg",
+    "volcano": "images/volcano.png",
+    "final": "images/final.jpg",  # Можно заменить на images/final.jpg
+}
+
+for theme, path in bg_themes.items():
+    try:
+        bg_surface = pygame.image.load(get_resource_path(path)).convert()
+        backgrounds[theme] = pygame.transform.scale(bg_surface, (1280, 720))
+    except pygame.error:
+        # Фоллбэк: создаём цветной фон, если изображение не найдено
+        colors = {
+            "tutorial": (200, 220, 255),
+            "forest": (100, 150, 100),
+            "desert": (210, 180, 140),
+            "ice": (173, 216, 230),
+            "volcano": (180, 60, 30),
+            "final": (50, 30, 80),
+        }
+        fallback = pygame.Surface((1280, 720))
+        fallback.fill(colors.get(theme, (100, 150, 255)))
+        backgrounds[theme] = fallback
+
+# Загрузка остальных изображений
+win_font = pygame.image.load(get_resource_path("images/winter.jpg")).convert_alpha()
+volc_font = pygame.image.load(get_resource_path("images/volcano.png")).convert_alpha()
+des_font = pygame.image.load(get_resource_path("images/desert.jpg")).convert_alpha()
+fin_font = pygame.image.load(get_resource_path("images/final.jpg")).convert_alpha()
+
 walk_right = [
     pygame.image.load(get_resource_path("images/player_right/player_right1.png")).convert_alpha(),
     pygame.image.load(get_resource_path("images/player_right/player_right2.png")).convert_alpha(),
@@ -755,7 +790,9 @@ def draw_level_transition():
         screen.blit(level_text, (1280 // 2 - level_text.get_width() // 2, 300))
         screen.blit(next_text, (1280 // 2 - next_text.get_width() // 2, 400))
     else:
-        screen.fill(current_level_obj.background_color)
+        # 🔥 ОТРИСОВКА ФОНА ПРИ ПЕРЕХОДЕ 🔥
+        current_bg = backgrounds.get(current_level_obj.theme, backgrounds["tutorial"])
+        screen.blit(current_bg, (0, 0))
         level_text = level_font.render(f"LEVEL {current_level} - {current_level_obj.theme.upper()}!", True, (255, 215, 0))
         next_text = label.render("Get ready for next level...", True, (255, 255, 255))
         screen.blit(level_text, (1280 // 2 - level_text.get_width() // 2, 300))
@@ -817,7 +854,7 @@ def draw_main_menu():
     
     button_padding_x = 50
     button_padding_y = 15
-    button_spacing = 40  # Расстояние между кнопками
+    button_spacing = 40
     
     start_button_width = start_text.get_width() + button_padding_x
     start_button_height = start_text.get_height() + button_padding_y
@@ -826,7 +863,6 @@ def draw_main_menu():
     quit_button_width = quit_text.get_width() + button_padding_x
     quit_button_height = quit_text.get_height() + button_padding_y
 
-    # Общая высота всех кнопок с отступами
     start_y = 160
     center_x = 1280 // 2
 
@@ -834,33 +870,27 @@ def draw_main_menu():
     level_select_button = pygame.Rect(center_x - level_button_width // 2, start_y + start_button_height + button_spacing, level_button_width, level_button_height)
     quit_button = pygame.Rect(center_x - quit_button_width // 2, start_y + start_button_height + button_spacing + level_button_height + button_spacing, quit_button_width, quit_button_height)
     
-    # Кнопка обучения (Start Game)
     pygame.draw.rect(screen, (50, 200, 50), start_button)
     pygame.draw.rect(screen, (0, 100, 0), start_button, 3)
     screen.blit(start_text, (start_button.centerx - start_text.get_width() // 2,
                              start_button.centery - start_text.get_height() // 2))
     
-    # Маленькая подпись под кнопкой обучения
     tutorial_note = small_font.render("(Tutorial Level)", True, (200, 255, 200))
     screen.blit(tutorial_note, (start_button.centerx - tutorial_note.get_width() // 2, start_button.bottom + 5))
     
-    # Кнопка выбора уровней
     pygame.draw.rect(screen, (200, 100, 50), level_select_button)
     pygame.draw.rect(screen, (100, 50, 0), level_select_button, 3)
     screen.blit(level_text, (level_select_button.centerx - level_text.get_width() // 2,
                              level_select_button.centery - level_text.get_height() // 2))
     
-    # Кнопка выхода
     pygame.draw.rect(screen, (200, 50, 50), quit_button)
     pygame.draw.rect(screen, (100, 0, 0), quit_button, 3)
     screen.blit(quit_text, (quit_button.centerx - quit_text.get_width() // 2,
                             quit_button.centery - quit_text.get_height() // 2))
     
-    # Информация о прогрессе
     progress_text = small_font.render(f"Уровней открыто: {unlocked_levels}/{max_level}", True, (255, 255, 200))
     screen.blit(progress_text, (10, 690))
     
-    # Инструкции (сдвинуты вниз, чтобы не мешать кнопкам)
     instructions = [
         "УПРАВЛЕНИЕ:",
         "A/D - Движение влево/вправо",
@@ -884,15 +914,11 @@ def draw_level_select():
     
     level_buttons.clear()
     
-    # Размеры кнопок
     button_width = 240
     button_height = 170
-    
-    # Центрируем по вертикали
     total_height = 2 * button_height + 50
     start_y = (720 - total_height) // 2
     
-    # Позиции для 5 уровней
     level_positions = {
         1: {"x": 220, "y": start_y},
         2: {"x": 480, "y": start_y},
@@ -915,7 +941,6 @@ def draw_level_select():
         is_unlocked = i <= unlocked_levels
         
         if is_unlocked:
-            # Градиентная заливка для открытых уровней
             for j in range(button_height):
                 color_value = 100 + int(j * 0.3)
                 color = (color_value, 130 + int(j * 0.2), 180)
@@ -923,41 +948,35 @@ def draw_level_select():
             border_color = (255, 215, 0)
             text_color = (255, 255, 255)
         else:
-            # Темная заливка для закрытых уровней
             pygame.draw.rect(screen, (60, 60, 70), button_rect)
             border_color = (80, 80, 80)
             text_color = (150, 150, 150)
         
         pygame.draw.rect(screen, border_color, button_rect, 3)
         
-        # Номер уровня
         level_num_text = label.render(f"УРОВЕНЬ {i}", True, text_color)
         num_x = x + button_width // 2 - level_num_text.get_width() // 2
-        num_y = y + 40  # Оставляем на месте
+        num_y = y + 40
         screen.blit(level_num_text, (num_x, num_y))
         
-        # Название темы (ПОДНЯТО ВЫШЕ)
         theme_text = label.render(themes_names[i], True, (220, 220, 220))
         theme_x = x + button_width // 2 - theme_text.get_width() // 2
-        theme_y = y + 80  # Было 95, поднято на 15 пикселей выше
+        theme_y = y + 80
         screen.blit(theme_text, (theme_x, theme_y))
         
-        # Рекорд
         level_key = str(i)
         if level_key in best_scores and is_unlocked:
             best_text = small_font.render(f"Рекорд: {best_scores[level_key]}", True, (255, 215, 0))
             best_x = x + button_width // 2 - best_text.get_width() // 2
-            best_y = y + 125  # Было 135, поднято на 10 пикселей выше
+            best_y = y + 125
             screen.blit(best_text, (best_x, best_y))
         
-        # Замок для заблокированных уровней
         if not is_unlocked:
             lock_text = level_font.render("🔒", True, (200, 50, 50))
             lock_x = x + button_width // 2 - lock_text.get_width() // 2
-            lock_y = y + 70  # Было 75, поднято на 5 пикселей выше
+            lock_y = y + 70
             screen.blit(lock_text, (lock_x, lock_y))
     
-    # Кнопка "Назад"
     back_button = pygame.Rect(540, 620, 200, 50)
     
     mouse_pos = pygame.mouse.get_pos()
@@ -972,15 +991,17 @@ def draw_level_select():
     screen.blit(back_text, (back_button.centerx - back_text.get_width() // 2,
                             back_button.centery - back_text.get_height() // 2))
     
-    # Информация о прогрессе
     progress_text = small_font.render(f"Открыто уровней: {unlocked_levels}/{max_level}", True, (255, 255, 200))
     screen.blit(progress_text, (10, 690))
     
     return back_button
+
 # Загрузка первого уровня
 current_level_obj = Level(1)
 
-# Основной игровой цикл
+# ============================================
+# 🔥 ОСНОВНОЙ ИГРОВОЙ ЦИКЛ 🔥
+# ============================================
 running = True
 while running:
     if game_state == GameState.MAIN_MENU:
@@ -1034,10 +1055,10 @@ while running:
             if double_points_timer <= 0:
                 double_points = False
         
-        # Отрисовка фона
-        screen.fill(current_level_obj.background_color)
-        screen.blit(bg, (bg_x, 0))
-        screen.blit(bg, (bg_x + 1280, 0))
+        # 🔥 ОТРИСОВКА ФОНА С УЧЁТОМ ТЕМЫ УРОВНЯ 🔥
+        current_bg = backgrounds.get(current_level_obj.theme, backgrounds["tutorial"])
+        screen.blit(current_bg, (bg_x, 0))
+        screen.blit(current_bg, (bg_x + 1280, 0))  # Дублируем для бесшовного скролла
         
         # Эффекты
         for effect in effects[:]:
@@ -1184,7 +1205,6 @@ while running:
             
             enemy.draw(screen)
             
-            # Проверка столкновения с учетом неуязвимости
             if player_rect.colliderect(enemy.rect) and invincible_frames <= 0:
                 if is_tutorial:
                     add_tutorial_message("Ой! Вас ударил призрак! Попробуйте снова!", 180)
@@ -1205,13 +1225,11 @@ while running:
         
         # Отрисовка игрока с эффектом мигания при неуязвимости
         if invincible_frames > 0:
-            # Мигание каждые 5 кадров
             if (invincible_frames // 3) % 2 == 0:
                 if keys[pygame.K_a]:
                     screen.blit(walk_left[player_anim_count], (player_x, player_y))
                 else:
                     screen.blit(walk_right[player_anim_count], (player_x, player_y))
-            # Иначе не рисуем (эффект мигания)
         else:
             if keys[pygame.K_a]:
                 screen.blit(walk_left[player_anim_count], (player_x, player_y))
@@ -1308,46 +1326,38 @@ while running:
             draw_tutorial_hints()
     
     elif game_state == GameState.GAME_OVER:
-        # Затемняем фон
         overlay = pygame.Surface((1280, 720))
         overlay.set_alpha(200)
         overlay.fill((0, 0, 0))
         screen.blit(overlay, (0, 0))
         
-        # Анимированный текст GAME OVER (по центру)
         game_over_text = level_font.render("GAME OVER", True, (255, 50, 50))
         shadow_text = level_font.render("GAME OVER", True, (100, 0, 0))
         
-        # Эффект пульсации
         pulse = abs(math.sin(pygame.time.get_ticks() * 0.003)) * 10
         game_over_y = 50 + pulse
         
-        # Центрируем текст GAME OVER
         game_over_x = 1280 // 2 - game_over_text.get_width() // 2
         screen.blit(shadow_text, (game_over_x + 5, game_over_y + 5))
         screen.blit(game_over_text, (game_over_x, game_over_y))
         
-        # Разделительная линия (по центру)
         line_width = 450
         line_x = (1280 - line_width) // 2
         line_y = game_over_y + game_over_text.get_height() + 20
         pygame.draw.line(screen, (255, 100, 100), (line_x, line_y), (line_x + line_width, line_y), 3)
         
-        # Рамка для статистики (по центру)
         stats_width = 650
         stats_height = 180
         stats_x = (1280 - stats_width) // 2
         stats_y = line_y + 25
         stats_rect = pygame.Rect(stats_x, stats_y, stats_width, stats_height)
         
-        # Красивая рамка с градиентом
         for i in range(3):
             pygame.draw.rect(screen, (50 + i*20, 50 + i*20, 80 + i*20), 
                            (stats_x - i, stats_y - i, stats_width + i*2, stats_height + i*2), 2)
         pygame.draw.rect(screen, (100, 100, 150), stats_rect)
         pygame.draw.rect(screen, (150, 150, 200), stats_rect, 3)
         
-        # Статистика (внутри рамки, по центру)
         final_score_text = label.render(f"Итоговые очки: {score}", True, (255, 215, 0))
         ghosts_killed_text = label.render(f"Призраков убито: {ghosts_killed}", True, (200, 100, 255))
         
@@ -1356,7 +1366,6 @@ while running:
         else:
             level_text = label.render(f"Пройдено уровней: {current_level}", True, (100, 100, 255))
         
-        # Вычисляем позиции для текста внутри рамки с равными отступами
         total_text_height = 50 * 3
         start_text_y = stats_y + (stats_height - total_text_height) // 2
         
@@ -1364,17 +1373,14 @@ while running:
         screen.blit(ghosts_killed_text, (1280 // 2 - ghosts_killed_text.get_width() // 2, start_text_y + 50))
         screen.blit(level_text, (1280 // 2 - level_text.get_width() // 2, start_text_y + 100))
         
-       
         button_width = 300  
         button_height = 60  
         button_spacing = 40  
         
-        # Вычисляем позиции для двух кнопок рядом
         total_buttons_width = button_width * 2 + button_spacing
         start_button_x = (1280 - total_buttons_width) // 2
         button_y = stats_y + stats_height + 30
         
-        # Проверяем, не выходят ли кнопки за нижний край
         if button_y + button_height > 700:
             button_y = 630
         
@@ -1383,7 +1389,6 @@ while running:
         
         mouse_pos = pygame.mouse.get_pos()
         
-        # Кнопка "Главное меню" с увеличенным шрифтом
         if menu_button.collidepoint(mouse_pos):
             pygame.draw.rect(screen, (80, 180, 230), menu_button)
             pygame.draw.rect(screen, (255, 255, 255), menu_button, 4)
@@ -1395,7 +1400,6 @@ while running:
         screen.blit(menu_text, (menu_button.centerx - menu_text.get_width() // 2,
                                 menu_button.centery - menu_text.get_height() // 2))
         
-        # Кнопка "Выбор уровня" с увеличенным шрифтом
         if level_select_btn.collidepoint(mouse_pos):
             pygame.draw.rect(screen, (230, 130, 80), level_select_btn)
             pygame.draw.rect(screen, (255, 255, 255), level_select_btn, 4)
@@ -1418,26 +1422,22 @@ while running:
                     game_state = GameState.LEVEL_SELECT
     
     elif game_state == GameState.GAME_WIN:
-        # Золотистый фон с градиентом
         for i in range(720):
             color_value = 200 + int(i * 0.07)
             color = (255, color_value, 100)
             pygame.draw.line(screen, color, (0, i), (1280, i))
         
-        # Партиклы конфетти
         if random.random() < 0.5:
             for _ in range(3):
                 effect = Effect(random.randint(0, 1280), random.randint(0, 360), "coin_collect")
                 effects.append(effect)
         
-        # Эффекты
         for effect in effects[:]:
             if not effect.update():
                 effects.remove(effect)
             else:
                 effect.draw(screen)
         
-        # Текст победы с анимацией (по центру)
         win_text = level_font.render("ПОБЕДА!", True, (255, 50, 50))
         shadow_win = level_font.render("ПОБЕДА!", True, (150, 0, 0))
         
@@ -1448,7 +1448,6 @@ while running:
         screen.blit(shadow_win, (win_x + 5, win_y + 5))
         screen.blit(win_text, (win_x, win_y))
         
-        # Звездочки вокруг текста
         for i in range(8):
             angle = pygame.time.get_ticks() * 0.002 + i * math.pi / 4
             x = 1280 // 2 + math.cos(angle) * 180
@@ -1456,41 +1455,35 @@ while running:
             star_text = level_font.render("⭐", True, (255, 255, 100))
             screen.blit(star_text, (x - 20, y - 20))
         
-        # Разделительная линия (по центру)
         line_width = 450
         line_x = (1280 - line_width) // 2
         line_y = win_y + win_text.get_height() + 20
         pygame.draw.line(screen, (255, 100, 50), (line_x, line_y), (line_x + line_width, line_y), 3)
         
-        # Рамка для статистики (по центру)
         stats_width = 650
         stats_height = 150
         stats_x = (1280 - stats_width) // 2
         stats_y = line_y + 25
         stats_rect = pygame.Rect(stats_x, stats_y, stats_width, stats_height)
         
-        # Красивая рамка с градиентом
         for i in range(3):
             pygame.draw.rect(screen, (255 - i*30, 215 - i*30, 0), 
                            (stats_x - i, stats_y - i, stats_width + i*2, stats_height + i*2), 2)
         pygame.draw.rect(screen, (255, 215, 0, 100), stats_rect)
         pygame.draw.rect(screen, (255, 200, 0), stats_rect, 3)
         
-        # Статистика (по центру)
         final_score = label.render(f"Итоговые очки: {score}", True, (255, 100, 0))
         congrats_text = label.render("Поздравляем! Вы прошли игру!", True, (0, 100, 0))
         
-        # Центрируем текст внутри рамки
         total_text_height = 60 * 2
         start_text_y = stats_y + (stats_height - total_text_height) // 2
         
         screen.blit(final_score, (1280 // 2 - final_score.get_width() // 2, start_text_y))
         screen.blit(congrats_text, (1280 // 2 - congrats_text.get_width() // 2, start_text_y + 60))
         
-        # УВЕЛИЧЕННЫЕ КНОПКИ (по центру, рядом друг с другом)
-        button_width = 300  # Увеличено с 200 до 250
-        button_height = 60  # Увеличено с 50 до 60
-        button_spacing = 40  # Увеличено расстояние между кнопками
+        button_width = 300
+        button_height = 60
+        button_spacing = 40
         
         total_buttons_width = button_width * 2 + button_spacing
         start_button_x = (1280 - total_buttons_width) // 2
@@ -1504,7 +1497,6 @@ while running:
         
         mouse_pos = pygame.mouse.get_pos()
         
-        # Кнопка "Главное меню"
         if menu_button.collidepoint(mouse_pos):
             pygame.draw.rect(screen, (80, 180, 230), menu_button)
             pygame.draw.rect(screen, (255, 255, 255), menu_button, 4)
@@ -1516,7 +1508,6 @@ while running:
         screen.blit(menu_text, (menu_button.centerx - menu_text.get_width() // 2,
                                 menu_button.centery - menu_text.get_height() // 2))
         
-        # Кнопка "Выбор уровня"
         if level_select_btn.collidepoint(mouse_pos):
             pygame.draw.rect(screen, (230, 130, 80), level_select_btn)
             pygame.draw.rect(screen, (255, 255, 255), level_select_btn, 4)
