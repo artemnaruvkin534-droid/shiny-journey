@@ -23,9 +23,7 @@ clock = pygame.time.Clock()
 icon = pygame.image.load(get_resource_path("images/favicon.ico")).convert_alpha()
 pygame.display.set_icon(icon)
 
-# ============================================
-# 🔥 ЗАГРУЗКА ФОНОВ ДЛЯ РАЗНЫХ ТЕМ УРОВНЕЙ 🔥
-# ============================================
+
 backgrounds = {}
 bg_themes = {
     "tutorial": "images/font.png",
