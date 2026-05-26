@@ -72,6 +72,15 @@ walk_left = [
 ]
 
 ghost = pygame.image.load(get_resource_path("images/ghost.png")).convert_alpha()
+
+enemy_sprites = {
+    "ghost": ghost,
+    "flying_ghost": pygame.image.load(get_resource_path("images/flying_ghost.png")).convert_alpha(),
+    "patrol_ghost": pygame.image.load(get_resource_path("images/patrol_ghost.png")).convert_alpha(),
+    "soldier": pygame.image.load(get_resource_path("images/solider.png")).convert_alpha(),
+    "spiker": pygame.image.load(get_resource_path("images/spiker.png")).convert_alpha(),
+    "tank": pygame.image.load(get_resource_path("images/tank.png")).convert_alpha(),
+}
 bullet = pygame.image.load(get_resource_path("images/bullet.png")).convert_alpha()
 coin_img = pygame.image.load(get_resource_path("images/coin.png")).convert_alpha()
 coin_img = pygame.transform.scale(coin_img, (30, 30))
@@ -91,39 +100,127 @@ game_state = GameState.MAIN_MENU
 # Класс для врага
 class Enemy:
     def __init__(self, x, y, enemy_type="ghost"):
-        self.rect = ghost.get_rect(topleft=(x, y))
         self.type = enemy_type
-        self.speed_x = random.choice([-2, -3]) if enemy_type == "ghost" else -4
+        self.image = enemy_sprites.get(enemy_type, ghost)
+        self.rect = self.image.get_rect(topleft=(x, y))
+
+        self.speed_x = -3
         self.speed_y = 0
-        self.patrol_range = random.randint(100, 200)
-        self.start_x = x
-        
+        self.health = 1
+        self.attack_timer = 0
+        self.direction = -1
+        self.jump_timer = 0
+
+        if enemy_type == "flying_ghost":
+            self.speed_x = -5
+            self.fly_offset = random.randint(0, 100)
+
+        elif enemy_type == "patrol_ghost":
+            self.speed_x = -2
+
+        elif enemy_type == "soldier":
+            self.speed_x = -4
+            self.health = 2
+
+        elif enemy_type == "spiker":
+            self.speed_x = -6
+
+        elif enemy_type == "tank":
+            self.speed_x = -1
+            self.health = 5
+
     def update(self, scroll_speed, platforms):
-        self.rect.x -= scroll_speed + abs(self.speed_x)
-        
-        if self.type == "patrol_ghost":
+        self.attack_timer += 1
+        self.jump_timer += 1
+
+        player_dx = player_x - self.rect.x
+        player_dy = player_y - self.rect.y
+
+        # FLYING GHOST преследует игрока
+        if self.type == "flying_ghost":
+            if player_dx > 0:
+                self.rect.x += 2
+            else:
+                self.rect.x -= 4
+
+            if abs(player_dy) > 10:
+                self.rect.y += 2 if player_dy > 0 else -2
+
+            self.rect.y += math.sin(pygame.time.get_ticks() * 0.005 + self.fly_offset) * 2
+
+        # PATROL GHOST летает волнами
+        elif self.type == "patrol_ghost":
+            self.rect.x += self.speed_x - scroll_speed
             self.rect.x += math.sin(pygame.time.get_ticks() * 0.003) * 2
-            
-        on_ground = False
-        for platform in platforms:
-            if (self.rect.bottom >= platform.top and 
-                self.rect.bottom <= platform.top + 15 and
-                self.rect.right > platform.left and 
-                self.rect.left < platform.right):
-                on_ground = True
-                self.rect.y = platform.top - self.rect.height
-                break
-                
-        if not on_ground and self.rect.bottom < 600:
-            self.speed_y += 0.5
+
+        # SOLDIER стреляет
+        elif self.type == "soldier":
+            self.rect.x += self.speed_x - scroll_speed
+
+            if abs(player_dx) < 500 and self.attack_timer > 90:
+                enemy_bullet = pygame.Rect(self.rect.x, self.rect.y + 20, 15, 6)
+
+                if "enemy_bullets" not in globals():
+                    globals()["enemy_bullets"] = []
+
+                globals()["enemy_bullets"].append(enemy_bullet)
+                self.attack_timer = 0
+
+        # SPIKER прыгает к игроку
+        elif self.type == "spiker":
+            self.rect.x += self.speed_x - scroll_speed
+
+            if self.jump_timer > 60:
+                self.speed_y = -12
+                self.jump_timer = 0
+
+            self.speed_y += 0.6
             self.rect.y += self.speed_y
+
+            if self.rect.y >= 500:
+                self.rect.y = 500
+                self.speed_y = 0
+
+        # TANK таранит игрока
+        elif self.type == "tank":
+            if abs(player_dx) < 350:
+                self.rect.x -= 8
+            else:
+                self.rect.x += self.speed_x - scroll_speed
+
+        # Обычный ghost
         else:
-            self.speed_y = 0
-            
+            self.rect.x += self.speed_x - scroll_speed
+
+        # Гравитация
+        if self.type not in ["flying_ghost", "patrol_ghost"]:
+            on_ground = False
+
+            for platform in platforms:
+                if (self.rect.bottom >= platform.top and
+                    self.rect.bottom <= platform.top + 15 and
+                    self.rect.right > platform.left and
+                    self.rect.left < platform.right):
+
+                    on_ground = True
+                    self.rect.y = platform.top - self.rect.height
+                    break
+
+            if not on_ground and self.rect.bottom < 600:
+                self.speed_y += 0.5
+                self.rect.y += self.speed_y
+            else:
+                if self.type != "spiker":
+                    self.speed_y = 0
+
         return self.rect.x + self.rect.width > 0
-    
+
+    def take_damage(self):
+        self.health -= 1
+        return self.health <= 0
+
     def draw(self, screen):
-        screen.blit(ghost, self.rect)
+        screen.blit(self.image, self.rect)
 
 # Класс для бонусов
 class PowerUp:
@@ -551,6 +648,7 @@ class FloatingNumber:
 
 effects = []
 floating_numbers = []
+enemy_bullets = []
 
 # Таймеры
 ghost_timer = pygame.USEREVENT + 1
@@ -1297,16 +1395,31 @@ while running:
             
             for index, enemy in enumerate(current_level_obj.enemies):
                 if el.colliderect(enemy.rect):
-                    current_level_obj.enemies.pop(index)
                     bullets_to_remove.append(i)
-                    ghosts_killed += 1
-                    points = 50 if double_points else 25
-                    score += points
-                    effects.append(Effect(enemy.rect.x + enemy.rect.width // 2,
-                                         enemy.rect.y + enemy.rect.height // 2, "ghost_death"))
-                    floating_numbers.append(FloatingNumber(enemy.rect.x, enemy.rect.y, points, (200, 100, 255)))
-                    if is_tutorial and ghosts_killed == 1:
-                        add_tutorial_message("Отлично! Вы убили призрака! +25 очков!", 120)
+
+                    if enemy.take_damage():
+                        current_level_obj.enemies.pop(index)
+                        ghosts_killed += 1
+
+                        if enemy.type == "tank":
+                            points = 150 if double_points else 75
+                        elif enemy.type == "soldier":
+                            points = 100 if double_points else 50
+                        else:
+                            points = 50 if double_points else 25
+
+                        score += points
+
+                        effects.append(Effect(enemy.rect.x + enemy.rect.width // 2,
+                                             enemy.rect.y + enemy.rect.height // 2, "ghost_death"))
+
+                        floating_numbers.append(
+                            FloatingNumber(enemy.rect.x, enemy.rect.y, points, (200, 100, 255))
+                        )
+
+                        if is_tutorial and ghosts_killed == 1:
+                            add_tutorial_message("Отлично! Вы убили моба!", 120)
+
                     break
         
         for i in sorted(bullets_to_remove, reverse=True):
@@ -1317,6 +1430,27 @@ while running:
         if invincible_frames > 0:
             invincible_frames -= 1
         
+        
+        # Пули врагов
+        enemy_bullets_to_remove = []
+
+        for i, bullet_rect in enumerate(enemy_bullets):
+            bullet_rect.x -= 12
+
+            pygame.draw.rect(screen, (255, 50, 50), bullet_rect)
+
+            if bullet_rect.x < -20:
+                enemy_bullets_to_remove.append(i)
+                continue
+
+            if player_rect.colliderect(bullet_rect) and invincible_frames <= 0:
+                game_state = GameState.GAME_OVER
+
+        for i in sorted(enemy_bullets_to_remove, reverse=True):
+            if i < len(enemy_bullets):
+                enemy_bullets.pop(i)
+
+
         draw_hud()
         
         # Отрисовка подсказок для обучения
@@ -1560,7 +1694,9 @@ while running:
                     if available_platforms:
                         platform = random.choice(available_platforms)
                         spawn_y = platform.y - ghost.get_height()
-                current_level_obj.enemies.append(Enemy(1280, spawn_y))
+                enemy_types = ["ghost", "flying_ghost", "patrol_ghost", "soldier", "spiker", "tank"]
+                enemy_type = random.choice(enemy_types)
+                current_level_obj.enemies.append(Enemy(1280, spawn_y, enemy_type))
             
             if event.type == coin_timer and len(current_level_obj.coins) < 10:
                 if current_level_obj.platforms:
