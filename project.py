@@ -92,10 +92,25 @@ enemy_sprites = {
     "soldier": pygame.image.load(get_resource_path("images/solider.png")).convert_alpha(),
     "spiker": pygame.image.load(get_resource_path("images/spiker.png")).convert_alpha(),
     "tank": pygame.image.load(get_resource_path("images/tank.png")).convert_alpha(),
+    "boss": pygame.image.load(get_resource_path("images/boss.png")).convert_alpha(),
 }
-bullet = pygame.image.load(get_resource_path("images/bullet.png")).convert_alpha()
+player_bullet = pygame.image.load(get_resource_path("images/bullet.png")).convert_alpha()
 coin_img = pygame.image.load(get_resource_path("images/coin.png")).convert_alpha()
 coin_img = pygame.transform.scale(coin_img, (30, 30))
+
+powerup_images = {}
+powerup_paths = {
+    "speed": "images/powerup_speed.png",
+    "infinite_ammo": "images/powerup_ammo.png",
+    "extra_life": "images/powerup_life.png",
+    "double_points": "images/powerup_points.png"
+}
+for p_type, path in powerup_paths.items():
+    try:
+        img = pygame.image.load(get_resource_path(path)).convert_alpha()
+        powerup_images[p_type] = pygame.transform.scale(img, (30, 30))
+    except pygame.error:
+        powerup_images[p_type] = None
 
 class GameState(Enum):
     MAIN_MENU = 0
@@ -127,7 +142,7 @@ ACHIEVEMENTS = {
     "LEVEL_1": {"name": "Начало пути", "desc": "Пройдите 1-й уровень"},
     "LEVEL_2": {"name": "Пустынный бегун", "desc": "Пройдите 2-й уровень"},
     "LEVEL_3": {"name": "Ледяной поход", "desc": "Пройдите 3-й уровень"},
-    "LEVEL_4": {"name": "Огненное испытание", "desc": "Пройдите 4-й уровень"},
+    "LEVEL_4": {"name": "Огненный тест", "desc": "Пройдите 4-й уровень"},
     "LEVEL_5": {"name": "Покоритель", "desc": "Пройдите 5-й уровень"},
     "COIN_50": {"name": "Богач", "desc": "Соберите 50 монет за один уровень"},
 }
@@ -172,7 +187,7 @@ def draw_achievement_popup():
             progress = min(1.0, (140 - achievement_popup['timer']) / 20.0)
             if achievement_popup['timer'] < 20:
                 progress = achievement_popup['timer'] / 20.0
-            popup_w, popup_h = 350, 80
+            popup_w, popup_h = 450, 90
             start_x, end_x = 1280, 1280 - popup_w - 20
             current_x = start_x + (end_x - start_x) * progress
             y = 20
@@ -247,20 +262,163 @@ class Enemy:
         self.attack_timer = 0
         self.direction = -1
         self.jump_timer = 0
-        base_health = {"ghost": 1, "flying_ghost": 1, "patrol_ghost": 1, "soldier": 2, "spiker": 1, "tank": 5}.get(enemy_type, 1)
+        self.platform = None
+        
+        # Босс-специфичные параметры
+        self.phase = 1
+        self.dash_timer = 0
+        self.is_dashing = False
+        self.dash_cooldown = 0
+        self.flash_timer = 0  # для мигания при смене фазы
+        self.minion_spawn_timer = 0
+        self.shake_timer = 0  # тряска экрана
+        
+        base_health = {"ghost": 1, "flying_ghost": 1, "patrol_ghost": 1, "soldier": 2, "spiker": 1, "tank": 5, "boss": 30}.get(enemy_type, 1)
         self.health = max(1, int(math.ceil(base_health * health_mult)))
+        self.max_health = self.health
+        
         if enemy_type == "flying_ghost": self.speed_x = -5; self.fly_offset = random.randint(0, 100)
         elif enemy_type == "patrol_ghost": self.speed_x = -2
         elif enemy_type == "soldier": self.speed_x = -4
         elif enemy_type == "spiker": self.speed_x = -6
         elif enemy_type == "tank": self.speed_x = -1
+        elif enemy_type == "boss": self.speed_x = -2
+
+    def _update_phase(self):
+        """Определяет текущую фазу босса по HP"""
+        if self.type != "boss": return
+        hp_percent = self.health / self.max_health
+        old_phase = self.phase
+        if hp_percent <= 0.33: self.phase = 3
+        elif hp_percent <= 0.66: self.phase = 2
+        else: self.phase = 1
+        
+        # Эффект при смене фазы
+        if self.phase != old_phase:
+            self.flash_timer = 60  # мигаем 60 кадров
+            effects.append(Effect(self.rect.centerx, self.rect.centery, "ghost_death"))
+            # Сообщение игроку
+            if self.phase == 2:
+                add_tutorial_message("⚠️ БОСС РАЗЪЯРЁН! Атаки стали опаснее!", 180)
+            elif self.phase == 3:
+                add_tutorial_message("💀 ЯРОСТЬ БОССА! Берегись рывков и миньонов!", 180)
+
+    def _boss_shoot(self):
+        if self.phase == 1:
+            # Одиночный выстрел
+            enemy_bullets.append(EnemyBullet(self.rect.x, self.rect.y + 40, vx=-12, vy=0, size=(20, 8)))
+        elif self.phase == 2:
+            # Веер из 3 пуль
+            for angle_offset in [-0.4, 0, 0.4]:
+                vx = -10 * math.cos(angle_offset)
+                vy = 10 * math.sin(angle_offset)
+                enemy_bullets.append(EnemyBullet(
+                    self.rect.x, self.rect.y + 40, 
+                    vx=vx, vy=vy, 
+                    size=(18, 8), 
+                    color=(255, 150, 0)  # оранжевые пули
+                ))
+        elif self.phase == 3:
+            # Самонаводящаяся пуля
+            dx = player_x - self.rect.x
+            dy = player_y - self.rect.y
+            dist = max(1, math.sqrt(dx*dx + dy*dy))
+            vx = (dx / dist) * 7
+            vy = (dy / dist) * 7
+            enemy_bullets.append(EnemyBullet(
+                self.rect.x, self.rect.y + 40, 
+                vx=vx, vy=vy, 
+                size=(18, 18), 
+                homing=True, 
+                color=(255, 100, 255)  # фиолетовые шары
+            ))
+
+    def _boss_dash(self):
+        """Рывок босса к игроку (только в фазе 3)"""
+        if self.phase != 3 or self.dash_cooldown > 0: return
+        if abs(player_x - self.rect.x) > 300:
+            self.is_dashing = True
+            self.dash_timer = 30
+            self.dash_cooldown = 180  # кулдаун 3 секунды
+            add_tutorial_message("⚡ РЫВОК БОССА!", 60)
+            effects.append(Effect(self.rect.centerx, self.rect.centery, "powerup"))
+
+    def _boss_spawn_minion(self):
+        """Призыв миньона (только в фазе 3)"""
+        if self.phase != 3 or len(current_level_obj.enemies) >= 5: return
+        if self.minion_spawn_timer <= 0:
+            if self.platform:
+                spawn_x = random.choice([self.platform.left + 50, self.platform.right - 100])
+                minion = Enemy(spawn_x, self.platform.y - 40, "ghost", 1.0)
+                minion.platform = self.platform
+                current_level_obj.enemies.append(minion)
+                effects.append(Effect(spawn_x, self.platform.y - 40, "ghost_death"))
+                add_tutorial_message("👻 Босс призвал миньона!", 90)
+            self.minion_spawn_timer = 300  # каждые 5 секунд
 
     def update(self, scroll_speed, platforms):
         self.attack_timer += 1
         self.jump_timer += 1
+        if self.flash_timer > 0: self.flash_timer -= 1
+        if self.dash_cooldown > 0: self.dash_cooldown -= 1
+        if self.minion_spawn_timer > 0: self.minion_spawn_timer -= 1
+        if self.dash_timer > 0: self.dash_timer -= 1
+        else: self.is_dashing = False
+        
         player_dx = player_x - self.rect.x
         player_dy = player_y - self.rect.y
-        if self.type == "flying_ghost":
+        
+        # === ЛОГИКА БОССА ===
+                # === ЛОГИКА БОССА ===
+        if self.type == "boss":
+            self._update_phase()
+            
+            # Скорость движения зависит от фазы
+            phase_speed = {1: 2, 2: 3.5, 3: 5}[self.phase]
+
+            # Желаемая позиция: игрок + смещение вправо
+            desired_x = player_x + 300  # Босс всегда правее игрока
+
+            # Ограничиваем, чтобы не уходил слишком далеко вправо (за пределы экрана)
+            max_x = 1280 - self.rect.width - 50  # немного отступа от края
+            desired_x = min(desired_x, max_x)
+
+            # Ограничиваем, чтобы не был левее игрока
+            min_x = player_x + 100  # минимум на 100 пикселей правее
+            desired_x = max(desired_x, min_x)
+
+            # Плавное движение к желаемой позиции
+            diff = desired_x - self.rect.x
+            if abs(diff) > 2:
+                move_step = phase_speed if diff > 0 else -phase_speed
+                self.rect.x += move_step
+
+            # Если босс делает рывок (фаза 3), он может временно игнорировать это правило
+            if self.is_dashing:
+                direction = 1 if player_x > self.rect.x else -1
+                self.rect.x += direction * 12
+                # Но всё равно не даём уйти слишком далеко влево
+                self.rect.x = max(self.rect.x, player_x + 50)
+
+            # Прыжки (фаза 2+)
+            if self.phase >= 2 and self.jump_timer > 120 and self.speed_y == 0:
+                self.speed_y = -15
+                self.jump_timer = 0
+                effects.append(Effect(self.rect.centerx, self.rect.bottom, "jump"))
+
+            # Стрельба
+            shoot_interval = {1: 90, 2: 60, 3: 35}[self.phase]
+            if self.attack_timer > shoot_interval:
+                self._boss_shoot()
+                self.attack_timer = 0
+
+            # Рывки и миньоны (фаза 3)
+            if self.phase == 3:
+                self._boss_dash()
+                self._boss_spawn_minion()
+        
+        # === ЛОГИКА ОБЫЧНЫХ ВРАГОВ (без изменений) ===
+        elif self.type == "flying_ghost":
             if player_dx > 0: self.rect.x += 2
             else: self.rect.x -= 4
             if abs(player_dy) > 10: self.rect.y += 2 if player_dy > 0 else -2
@@ -271,9 +429,7 @@ class Enemy:
         elif self.type == "soldier":
             self.rect.x += self.speed_x - scroll_speed
             if abs(player_dx) < 500 and self.attack_timer > 90:
-                enemy_bullet = pygame.Rect(self.rect.x, self.rect.y + 20, 15, 6)
-                if "enemy_bullets" not in globals(): globals()["enemy_bullets"] = []
-                globals()["enemy_bullets"].append(enemy_bullet)
+                enemy_bullets.append(EnemyBullet(self.rect.x, self.rect.y + 20, vx=-10, vy=0, size=(15, 6)))
                 self.attack_timer = 0
         elif self.type == "spiker":
             self.rect.x += self.speed_x - scroll_speed
@@ -284,8 +440,10 @@ class Enemy:
         elif self.type == "tank":
             if abs(player_dx) < 350: self.rect.x -= 8
             else: self.rect.x += self.speed_x - scroll_speed
-        else: self.rect.x += self.speed_x - scroll_speed
-
+        else:
+            self.rect.x += self.speed_x - scroll_speed
+        
+        # Гравитация
         if self.type not in ["flying_ghost", "patrol_ghost"]:
             on_ground = False
             for platform in platforms:
@@ -302,35 +460,78 @@ class Enemy:
 
     def take_damage(self):
         self.health -= 1
+        # Эффект попадания
+        effects.append(Effect(self.rect.centerx, self.rect.centery, "shoot"))
         return self.health <= 0
 
     def draw(self, screen):
-        screen.blit(self.image, self.rect)
-        base_health = {"ghost": 1, "flying_ghost": 1, "patrol_ghost": 1, "soldier": 2, "spiker": 1, "tank": 5}.get(self.type, 1)
+        # Мигание при смене фазы
+        if self.flash_timer > 0 and (self.flash_timer // 4) % 2 == 0:
+            # Рисуем белую вспышку
+            flash_surf = self.image.copy()
+            flash_surf.fill((255, 255, 255, 180), special_flags=pygame.BLEND_RGBA_ADD)
+            screen.blit(flash_surf, self.rect)
+        else:
+            # Красноватый оттенок в фазе 3
+            if self.type == "boss" and self.phase == 3:
+                tinted = self.image.copy()
+                tinted.fill((255, 50, 50, 80), special_flags=pygame.BLEND_RGBA_ADD)
+                screen.blit(tinted, self.rect)
+            else:
+                screen.blit(self.image, self.rect)
+        
+        # Полоска здоровья (у босса — большая и снизу экрана)
+        base_health = {"ghost": 1, "flying_ghost": 1, "patrol_ghost": 1, "soldier": 2, "spiker": 1, "tank": 5, "boss": 30}.get(self.type, 1)
         max_h = max(1, int(math.ceil(base_health * DIFFICULTY_SETTINGS[current_difficulty]["health_mult"])))
-        if self.health < max_h:
+        
+        if self.type == "boss":
+            # ОГРОМНАЯ полоска HP босса внизу экрана
+            bar_width, bar_height = 800, 25
+            bar_x = (1280 - bar_width) // 2
+            bar_y = 670
+            # Фон
+            pygame.draw.rect(screen, (40, 0, 0), (bar_x - 3, bar_y - 3, bar_width + 6, bar_height + 6))
+            pygame.draw.rect(screen, (80, 0, 0), (bar_x, bar_y, bar_width, bar_height))
+            # Заполнение с цветом фазы
+            hp_width = int(bar_width * (self.health / max_h))
+            phase_colors = {1: (100, 255, 100), 2: (255, 200, 0), 3: (255, 50, 50)}
+            pygame.draw.rect(screen, phase_colors[self.phase], (bar_x, bar_y, hp_width, bar_height))
+            pygame.draw.rect(screen, (255, 255, 255), (bar_x, bar_y, bar_width, bar_height), 2)
+            # Имя босса
+            boss_name = {1: "🔥 ТЁМНЫЙ ВЛАСТЫКА 🔥", 2: "⚡ РАЗЪЯРЁННЫЙ БОСС ⚡", 3: "💀 ЯРОСТЬ 💀"}[self.phase]
+            name_text = small_font.render(boss_name, True, phase_colors[self.phase])
+            screen.blit(name_text, (bar_x + bar_width // 2 - name_text.get_width() // 2, bar_y - 30))
+        elif self.health < max_h:
             bar_width, bar_height = self.rect.width, 4
             bar_x, bar_y = self.rect.x, self.rect.y - 8
             pygame.draw.rect(screen, (80, 0, 0), (bar_x, bar_y, bar_width, bar_height))
             hp_width = int(bar_width * (self.health / max_h))
             pygame.draw.rect(screen, (0, 255, 0), (bar_x, bar_y, hp_width, bar_height))
-
+            
 class PowerUp:
     def __init__(self, x, y, power_type):
-        self.rect = pygame.Rect(x, y, 25, 25)
+        self.rect = pygame.Rect(x, y, 30, 30) # Увеличил размер до 30x30 под картинки
         self.type = power_type
         self.lifetime = 300
         self.animation_frame = 0
+        self.image = powerup_images.get(power_type)
+        
     def update(self, scroll_speed):
         self.rect.x -= scroll_speed
         self.lifetime -= 1
         self.animation_frame = (self.animation_frame + 1) % 20
         return self.lifetime > 0 and self.rect.x + self.rect.width > 0
+        
     def draw(self, screen):
-        colors = {"speed": (255, 255, 0), "infinite_ammo": (0, 255, 255), "extra_life": (255, 0, 0), "double_points": (255, 165, 0)}
-        color = colors.get(self.type, (255, 255, 255))
-        pygame.draw.rect(screen, color, self.rect)
-        pygame.draw.rect(screen, (255, 255, 255), self.rect, 2)
+        if self.image:
+            # Рисуем картинку бонуса
+            screen.blit(self.image, self.rect)
+        else:
+            # Запасной вариант, если картинки нет в папке images
+            colors = {"speed": (255, 255, 0), "infinite_ammo": (0, 255, 255), "extra_life": (255, 0, 0), "double_points": (255, 165, 0)}
+            color = colors.get(self.type, (255, 255, 255))
+            pygame.draw.rect(screen, color, self.rect)
+            pygame.draw.rect(screen, (255, 255, 255), self.rect, 2)
 
 class Level:
     def __init__(self, level_num, is_tutorial=False):
@@ -387,13 +588,36 @@ class Level:
                 if random.random() < 0.3: self.enemies.append(Enemy(platform.x + 40, platform.y - 40, enemy_cycle[i % len(enemy_cycle)], health_mult))
             for i in range(5): self.powerups.append(PowerUp(random.randint(500, 3200), random.choice([350, 400, 450, 500]), random.choice(["speed", "infinite_ammo", "double_points"])))
         elif self.num == 5:
-            self.scroll_speed = int(8 * diff["scroll_mult"]); self.ghost_spawn_delay = int(1500 * diff["spawn_mult"]); self.goal_score = int(600 * diff["score_mult"]); self.background_color = (50, 50, 100); self.theme = "final"; self.gravity = 1.4
-            self.platforms = [pygame.Rect(300, 550, 100, 20), pygame.Rect(450, 500, 100, 20), pygame.Rect(600, 450, 100, 20), pygame.Rect(750, 400, 100, 20), pygame.Rect(900, 350, 100, 20), pygame.Rect(1050, 300, 100, 20), pygame.Rect(1200, 500, 100, 20), pygame.Rect(1350, 450, 100, 20), pygame.Rect(1500, 400, 100, 20), pygame.Rect(1650, 350, 100, 20), pygame.Rect(1800, 300, 100, 20), pygame.Rect(1950, 250, 100, 20), pygame.Rect(2100, 500, 100, 20), pygame.Rect(2250, 450, 100, 20), pygame.Rect(2400, 400, 100, 20), pygame.Rect(2550, 350, 100, 20), pygame.Rect(2700, 300, 100, 20), pygame.Rect(2850, 250, 100, 20)]
-            for i in range(60): self.coins.append(pygame.Rect(random.randint(300, 4000), random.choice([300, 350, 400, 450, 500, 550]), 30, 30))
-            enemy_cycle = ["flying_ghost", "soldier", "spiker", "tank", "patrol_ghost"]
-            for i, platform in enumerate(self.platforms):
-                if random.random() < 0.4: self.enemies.append(Enemy(platform.x + 30, platform.y - 40, enemy_cycle[i % len(enemy_cycle)], health_mult))
-            for i in range(7): self.powerups.append(PowerUp(random.randint(500, 3500), random.choice([300, 350, 400, 450, 500]), random.choice(["speed", "infinite_ammo", "double_points", "extra_life"])))
+            self.scroll_speed = int(5 * diff["scroll_mult"])
+            self.ghost_spawn_delay = 999999  # Отключаем обычных врагов
+            self.goal_score = int(1000 * diff["score_mult"])
+            self.background_color = (50, 30, 80); self.theme = "final"; self.gravity = 1.2
+
+            # Создаем удобные платформы для битвы
+            arena_y = 450
+            self.platforms = [
+                pygame.Rect(150, 550, 200, 20),       # Стартовая точка игрока (слева)
+                pygame.Rect(500, arena_y, 800, 30),    # Длинная арена по центру и справа
+                pygame.Rect(100, 400, 150, 20),        # Верхняя платформа для уклонений
+            ]
+
+            # Монеты разбросаны по уровню
+            for i in range(60):
+                self.coins.append(pygame.Rect(random.randint(200, 1200), random.choice([350, 400, 500]), 30, 30))
+
+            # Спавним босса СРАЗУ в правой части экрана (координата X = 900)
+            boss_platform = self.platforms[1] # Главная арена
+            boss = Enemy(900, boss_platform.y - 90, "boss", health_mult)
+            boss.platform = boss_platform # Оставляем для гравитации
+            self.enemies = [boss]
+
+            # Бонусы на уровне
+            for i in range(5):
+                self.powerups.append(PowerUp(
+                    random.randint(400, 1100),
+                    random.choice([350, 400]),
+                    random.choice(["speed", "infinite_ammo", "double_points", "extra_life"])
+                ))
 
 bullets = []
 bullets_left = 5
@@ -465,6 +689,31 @@ class Particle:
             pygame.draw.circle(particle_surface, (*self.color, alpha), (self.size, self.size), self.size)
             surface.blit(particle_surface, (int(self.x - self.size), int(self.y - self.size)))
 
+class EnemyBullet:
+    def __init__(self, x, y, vx=-12, vy=0, size=(20, 8), homing=False, color=(255, 50, 50)):
+        self.rect = pygame.Rect(x, y, size[0], size[1])
+        self.vx = vx
+        self.vy = vy
+        self.homing = homing
+        self.color = color
+        self.life = 300  # пуля живёт 5 секунд
+    
+    def update(self):
+        self.rect.x += self.vx
+        self.rect.y += self.vy
+        self.life -= 1
+        # Возвращаем True, если пуля ещё "жива" и в пределах экрана
+        return self.life > 0 and -50 < self.rect.x < 1350 and -50 < self.rect.y < 800
+    
+    def draw(self, screen):
+        if self.homing:
+            # Самонаводящаяся пуля — фиолетовый шар
+            pygame.draw.circle(screen, self.color, self.rect.center, max(1, self.rect.width // 2))
+            pygame.draw.circle(screen, (255, 255, 255), self.rect.center, max(1, self.rect.width // 4))
+        else:
+            # Обычная пуля — прямоугольник
+            pygame.draw.rect(screen, self.color, self.rect)
+
 class Effect:
     def __init__(self, x, y, effect_type):
         self.x, self.y, self.type = x, y, effect_type
@@ -499,7 +748,7 @@ class Effect:
         elif self.type == "powerup":
             for _ in range(20):
                 angle, speed = random.uniform(0, math.pi * 2), random.uniform(1, 5)
-                self.particles.append(Particle(self.x + 12, self.y + 12, (0, 255, 255), math.cos(angle) * speed, math.sin(angle) * speed, random.randint(2, 5), random.randint(30, 50)))
+                self.particles.append(Particle(self.x + 15, self.y + 15, (0, 255, 255), math.cos(angle) * speed, math.sin(angle) * speed, random.randint(2, 5), random.randint(30, 50)))
             self.duration = 50
     def update(self):
         for particle in self.particles[:]:
@@ -1095,7 +1344,7 @@ while running:
         
         bullets_to_remove = []
         for i, el in enumerate(bullets):
-            screen.blit(bullet, (el.x, el.y)); el.x += 20
+            screen.blit(player_bullet, (el.x, el.y)); el.x += 20
             if el.x > 1282: bullets_to_remove.append(i); continue
             for index, enemy in enumerate(current_level_obj.enemies):
                 if el.colliderect(enemy.rect):
@@ -1104,9 +1353,12 @@ while running:
                         current_level_obj.enemies.pop(index)
                         ghosts_killed += 1
                         run_stats["enemies_killed"] += 1
+                        if enemy.type == "boss" and current_level == 5:
+                            score = current_level_obj.goal_score
                         if ghosts_killed == 1: unlock_achievement("FIRST_KILL")
                         if enemy.type == "tank": points = 150 if double_points else 75
                         elif enemy.type == "soldier": points = 100 if double_points else 50
+                        elif enemy.type == "boss": points = 1000 if double_points else 750
                         else: points = 50 if double_points else 25
                         score += points
                         effects.append(Effect(enemy.rect.x + enemy.rect.width // 2, enemy.rect.y + enemy.rect.height // 2, "ghost_death"))
@@ -1119,14 +1371,18 @@ while running:
         if invincible_frames > 0: invincible_frames -= 1
         
         enemy_bullets_to_remove = []
-        for i, bullet_rect in enumerate(enemy_bullets):
-            bullet_rect.x -= 12; pygame.draw.rect(screen, (255, 50, 50), bullet_rect)
-            if bullet_rect.x < -20: enemy_bullets_to_remove.append(i); continue
-            if player_rect.colliderect(bullet_rect) and invincible_frames <= 0:
+        for i, bullet in enumerate(enemy_bullets):
+            if not bullet.update():
+                enemy_bullets_to_remove.append(i)
+                continue
+            bullet.draw(screen)
+            if player_rect.colliderect(bullet.rect) and invincible_frames <= 0:
                 player_health -= 1
                 run_stats["damage_taken"] += 1
                 invincible_frames = invincible_duration
+                effects.append(Effect(player_rect.centerx, player_rect.centery, "ghost_death"))
                 if player_health <= 0: game_state = GameState.GAME_OVER
+                enemy_bullets_to_remove.append(i)
         for i in sorted(enemy_bullets_to_remove, reverse=True):
             if i < len(enemy_bullets): enemy_bullets.pop(i)
 
@@ -1221,7 +1477,8 @@ while running:
         congrats_text = label.render("Поздравляем! Вы прошли игру!", True, (0, 100, 0))
         diff_settings = DIFFICULTY_SETTINGS[current_difficulty]
         diff_text = label.render(f"Сложность: {diff_settings['name']}", True, diff_settings["color"])
-        total_text_height, start_text_y = 60 * 3, stats_y + (stats_height - total_text_height) // 2
+        total_text_height = 60 * 3
+        start_text_y = stats_y + (stats_height - total_text_height) // 2
         screen.blit(final_score, (1280 // 2 - final_score.get_width() // 2, start_text_y))
         screen.blit(congrats_text, (1280 // 2 - congrats_text.get_width() // 2, start_text_y + 60))
         screen.blit(diff_text, (1280 // 2 - diff_text.get_width() // 2, start_text_y + 120))
@@ -1286,7 +1543,7 @@ while running:
                         current_level_obj.coins.append(pygame.Rect(platform.x + random.randint(10, platform.width - 40), platform.y - 40, 30, 30))
             if event.type == pygame.KEYUP and event.key == pygame.K_b:
                 if bullets_infinite or bullets_left > 0:
-                    bullets.append(bullet.get_rect(topleft=(player_x + 70, player_y + 60)))
+                    bullets.append(player_bullet.get_rect(topleft=(player_x + 70, player_y + 60)))
                     if not bullets_infinite: bullets_left -= 1
                     effects.append(Effect(player_x + 70, player_y + 60, "shoot"))
                     if is_tutorial and bullets_left == 4: add_tutorial_message("Вы выстрелили! Нажмите R чтобы перезарядиться.", 120)
